@@ -1,0 +1,30 @@
+{
+  "uuid": "9edfe546-7342-4dda-84de-2d1683fb0641",
+  "shortName": "Currency Conv.",
+  "longName": "Currency Converter",
+  "companyName": "AMU",
+  "versionCode": 1,
+  "versionLabel": "1.0.0",
+  "watchapp": {
+    "watchface": false
+  },
+  "appKeys": {
+    "updateCurrency": 0,
+    "currencyIndex": 1,
+    "currency": 2,
+    "currencyRate": 3,
+    "currencyLength":4,
+    "currencyDone":5,
+    "errorSending":6
+  },
+  "resources": {
+    "media": [
+        {
+          "type": "png",
+          "name": "MENUICON",
+          "file": "menuIcon.png",
+          "menuIcon":"true"
+        }
+      ]
+  }
+}
