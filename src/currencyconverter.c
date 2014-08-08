@@ -22,6 +22,7 @@ limitations under the License.
 #define CURRENCY_OFFSET 100
 #define CURRENCY_STR_LEN 3
 #define RATE_STR_LEN 16
+#define LONG_CLICK_INTERVAL 50
 // *** *** *** ***
 
 // *** Variables for User interface ***
@@ -39,7 +40,6 @@ static int currency_length = 0;
 static char currencies[PERSIST_STRING_MAX_LENGTH];
 static char currency_current[CURRENCY_STR_LEN];
 static double currency_current_rate;
-static bool currencies_updating = false;
 
 static char from_currency[CURRENCY_STR_LEN];
 static double from_currency_rate;
@@ -58,6 +58,16 @@ enum {
 };
 // *** *** *** *** *** ***
 
+// *** states ***
+enum states_t { STATE_SHOW_CURRENCY = 0x0, STATE_UPDATING = 0x1, };
+static enum states_t state = STATE_SHOW_CURRENCY;
+// *** *** *** *** *** ***
+
+static struct {
+  AppTimer *timer;
+  ButtonId button;
+} lc_timer;
+
 static void updateCurrentCurrency() {
   char rate[RATE_STR_LEN];
 
@@ -72,22 +82,33 @@ static void updateCurrentCurrency() {
 }
 
 static void updateTextFields() {
-  if (currency_length > 0) {
-    snprintf(from, sizeof(from), "%d %s", value, from_currency);
-    text_layer_set_text(from_layer, (const char *)from);
+  switch (state) {
+    case STATE_SHOW_CURRENCY:
+      if (currency_length > 0) {
+        snprintf(from, sizeof(from), "%d %s", value, from_currency);
+        text_layer_set_text(from_layer, (const char *)from);
 
-    char a[RATE_STR_LEN];
-    double d = value * currency_current_rate / from_currency_rate;
-    ftoa(a, d, 2);
+        char a[RATE_STR_LEN];
+        double d = value * currency_current_rate / from_currency_rate;
+        ftoa(a, d, 2);
 
-    snprintf(to, sizeof(to), "%s %s", a, currency_current);
-    text_layer_set_text(to_layer, to);
+        snprintf(to, sizeof(to), "%s %s", a, currency_current);
+        text_layer_set_text(to_layer, to);
 
-    text_layer_set_text(equals_layer, "=");
+        text_layer_set_text(equals_layer, "=");
 
-    snprintf(no, sizeof(no), "%d / %d ", (int)currency_index + 1,
-             currency_length);
-    text_layer_set_text(no_currency_layer, no);
+        snprintf(no, sizeof(no), "%d / %d ", (int)currency_index + 1,
+                 currency_length);
+        text_layer_set_text(no_currency_layer, no);
+      }
+      break;
+    case STATE_UPDATING:
+      snprintf(no, sizeof(no), "%d / %d ", (int)currency_index,
+               currency_length);
+      text_layer_set_text(no_currency_layer, no);
+      break;
+    default:
+      break;
   }
 }
 
@@ -104,7 +125,6 @@ static void in_received_handler(DictionaryIterator *received, void *context) {
   // incoming message received
   Tuple *tuple = dict_read_first(received);
 
-  uint32_t index = 0;
   char rate[RATE_STR_LEN];
   char currency[CURRENCY_STR_LEN];
 
@@ -113,7 +133,7 @@ static void in_received_handler(DictionaryIterator *received, void *context) {
     // tuple->value->cstring);
     switch (tuple->key) {
       case CURRENCY_INDEX:
-        index = tuple->value->uint32;
+        currency_index = tuple->value->uint32;
         break;
       case CURRENCY:
         strncpy(currency, tuple->value->cstring, CURRENCY_STR_LEN);
@@ -131,13 +151,13 @@ static void in_received_handler(DictionaryIterator *received, void *context) {
         strncpy(from_currency, "EUR", CURRENCY_STR_LEN);
         from_currency_rate = 1.0;
         text_layer_set_text(equals_layer, "=");
-        currencies_updating = false;
+        state = STATE_SHOW_CURRENCY;
         currency_index = 0;
         updateCurrentCurrency();
         updateTextFields();
         break;
       case ERROR_SENDING:
-        currencies_updating = false;
+        state = STATE_SHOW_CURRENCY;
         text_layer_set_text(from_layer, "Error!");
         text_layer_set_text(equals_layer, "Check network");
         text_layer_set_text(to_layer, "connectivity!");
@@ -148,13 +168,12 @@ static void in_received_handler(DictionaryIterator *received, void *context) {
     tuple = dict_read_next(received);
   }
 
-  if (currencies_updating) {
+  if (state == STATE_UPDATING) {
     strncat(currencies, currency, CURRENCY_STR_LEN);
-    persist_write_string(index + CURRENCY_OFFSET, rate);
-
-    snprintf(no, sizeof(no), "%d / %d ", (int)index, currency_length);
-    text_layer_set_text(no_currency_layer, no);
+    persist_write_string(currency_index + CURRENCY_OFFSET, rate);
   }
+
+  updateTextFields();
 }
 
 static void in_dropped_handler(AppMessageResult reason, void *context) {
@@ -163,25 +182,55 @@ static void in_dropped_handler(AppMessageResult reason, void *context) {
   currency_length--;
 }
 
+static void long_click_timer_callback(void *data) {
+  switch (lc_timer.button) {
+    case BUTTON_ID_UP:
+      value++;
+      break;
+    case BUTTON_ID_DOWN:
+      value--;
+      break;
+    default:
+      break;
+  }
+
+  updateTextFields();
+
+  lc_timer.timer =
+      app_timer_register(LONG_CLICK_INTERVAL, long_click_timer_callback, NULL);
+}
+
 static void select_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if (!currencies_updating) {
-    currency_index = (currency_index + 1) % currency_length;
-    updateCurrentCurrency();
-    updateTextFields();
+  switch (state) {
+    case STATE_SHOW_CURRENCY:
+      currency_index = (currency_index + 1) % currency_length;
+      updateCurrentCurrency();
+      updateTextFields();
+      break;
+    default:
+      break;
   }
 }
 
 static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if (!currencies_updating) {
-    value++;
-    updateTextFields();
+  switch (state) {
+    case STATE_SHOW_CURRENCY:
+      value++;
+      updateTextFields();
+      break;
+    default:
+      break;
   }
 }
 
 static void down_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if (!currencies_updating) {
-    if (value > 1) value--;
-    updateTextFields();
+  switch (state) {
+    case STATE_SHOW_CURRENCY:
+      if (value > 1) value--;
+      updateTextFields();
+      break;
+    default:
+      break;
   }
 }
 
@@ -189,31 +238,76 @@ static void select_multi_click_handler(ClickRecognizerRef recognizer,
                                        void *context) {
   const uint16_t count = click_number_of_clicks_counted(recognizer);
 
-  // Two clicks, send message to update currency
-  if (count == 2) {
-    memset(currencies, 0, sizeof(currencies));
-    DictionaryIterator *iter;
-    app_message_outbox_begin(&iter);
-    Tuplet value = TupletInteger(UPDATE_CURRENCY, 1);
-    dict_write_tuplet(iter, &value);
-    app_message_outbox_send();
+  switch (state) {
+    case STATE_SHOW_CURRENCY:
+      // Two clicks, send message to update currency
+      if (count == 2) {
+        memset(currencies, 0, sizeof(currencies));
+        DictionaryIterator *iter;
+        app_message_outbox_begin(&iter);
+        Tuplet value = TupletInteger(UPDATE_CURRENCY, 1);
+        dict_write_tuplet(iter, &value);
+        app_message_outbox_send();
 
-    text_layer_set_text(from_layer, "");
-    text_layer_set_text(equals_layer, "Loading...");
-    text_layer_set_text(to_layer, "");
+        text_layer_set_text(from_layer, "");
+        text_layer_set_text(equals_layer, "Loading...");
+        text_layer_set_text(to_layer, "");
 
-    currencies_updating = true;
+        state = STATE_UPDATING;
+      }
+      break;
+    default:
+      break;
   }
 }
 
 void select_long_click_handler(ClickRecognizerRef recognizer, void *context) {
-  if (!currencies_updating) {
-    vibes_double_pulse();
-    strncpy(from_currency, currency_current, CURRENCY_STR_LEN);
-    from_currency_rate = currency_current_rate;
+  switch (state) {
+    case STATE_SHOW_CURRENCY:
+      vibes_double_pulse();
+      strncpy(from_currency, currency_current, CURRENCY_STR_LEN);
+      from_currency_rate = currency_current_rate;
 
-    updateCurrentCurrency();
-    updateTextFields();
+      updateCurrentCurrency();
+      updateTextFields();
+      break;
+    default:
+      break;
+  }
+}
+
+void up_long_click_handler(ClickRecognizerRef recognizer, void *context) {
+  switch (state) {
+    case STATE_SHOW_CURRENCY:
+      lc_timer.button = BUTTON_ID_UP;
+      lc_timer.timer = app_timer_register(LONG_CLICK_INTERVAL,
+                                          long_click_timer_callback, NULL);
+      break;
+    default:
+      break;
+  }
+}
+
+void down_long_click_handler(ClickRecognizerRef recognizer, void *context) {
+  switch (state) {
+    case STATE_SHOW_CURRENCY:
+      lc_timer.button = BUTTON_ID_DOWN;
+      lc_timer.timer = app_timer_register(LONG_CLICK_INTERVAL,
+                                          long_click_timer_callback, NULL);
+      break;
+    default:
+      break;
+  }
+}
+
+void up_down_long_click_release_handler(ClickRecognizerRef recognizer,
+                                        void *context) {
+  switch (state) {
+    case STATE_SHOW_CURRENCY:
+      app_timer_cancel(lc_timer.timer);
+      break;
+    default:
+      break;
   }
 }
 
@@ -225,6 +319,11 @@ static void click_config_provider(void *context) {
                                select_multi_click_handler);
   window_long_click_subscribe(BUTTON_ID_SELECT, 700, select_long_click_handler,
                               NULL);
+
+  window_long_click_subscribe(BUTTON_ID_UP, 500, up_long_click_handler,
+                              up_down_long_click_release_handler);
+  window_long_click_subscribe(BUTTON_ID_DOWN, 500, down_long_click_handler,
+                              up_down_long_click_release_handler);
 }
 
 static void window_load(Window *window) {
