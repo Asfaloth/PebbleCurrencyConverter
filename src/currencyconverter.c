@@ -188,7 +188,7 @@ static void long_click_timer_callback(void *data) {
       value++;
       break;
     case BUTTON_ID_DOWN:
-      value--;
+      if (value > 1) value--;
       break;
     default:
       break;
